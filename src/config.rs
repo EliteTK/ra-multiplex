@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
@@ -21,12 +22,12 @@ mod default {
         10
     }
 
-    pub fn listen() -> (IpAddr, u16) {
+    pub fn listen() -> ListenAddr {
         // localhost & some random unprivileged port
-        (IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 27_631)
+        ListenAddr::Tcp(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 27_631)
     }
 
-    pub fn connect() -> (IpAddr, u16) {
+    pub fn connect() -> ListenAddr {
         listen()
     }
 
@@ -83,6 +84,13 @@ mod de {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ListenAddr {
+    Tcp(IpAddr, u16),
+    Unix(PathBuf),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default::instance_timeout")]
@@ -94,10 +102,10 @@ pub struct Config {
     pub gc_interval: u32,
 
     #[serde(default = "default::listen")]
-    pub listen: (IpAddr, u16),
+    pub listen: ListenAddr,
 
     #[serde(default = "default::connect")]
-    pub connect: (IpAddr, u16),
+    pub connect: ListenAddr,
 
     #[serde(default = "default::log_filters")]
     pub log_filters: String,

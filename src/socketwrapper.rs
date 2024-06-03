@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{io, net};
+use std::{fs, io, net};
 
 use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
