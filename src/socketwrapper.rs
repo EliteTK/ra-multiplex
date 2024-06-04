@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{fs, io, net};
 
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{tcp, unix, TcpListener, TcpStream, ToSocketAddrs, UnixListener, UnixStream};
 
@@ -24,10 +24,12 @@ impl From<tokio::net::unix::SocketAddr> for SocketAddr {
     }
 }
 
-#[pin_project(project = OwnedReadHalfProj)]
-pub enum OwnedReadHalf {
-    Tcp(#[pin] tcp::OwnedReadHalf),
-    Unix(#[pin] unix::OwnedReadHalf),
+pin_project! {
+    #[project = OwnedReadHalfProj]
+    pub enum OwnedReadHalf {
+        Tcp { #[pin] tcp: tcp::OwnedReadHalf },
+        Unix { #[pin] unix: unix::OwnedReadHalf },
+    }
 }
 
 impl AsyncRead for OwnedReadHalf {
@@ -37,16 +39,18 @@ impl AsyncRead for OwnedReadHalf {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match self.project() {
-            OwnedReadHalfProj::Tcp(tcp) => tcp.poll_read(cx, buf),
-            OwnedReadHalfProj::Unix(unix) => unix.poll_read(cx, buf),
+            OwnedReadHalfProj::Tcp { tcp } => tcp.poll_read(cx, buf),
+            OwnedReadHalfProj::Unix { unix } => unix.poll_read(cx, buf),
         }
     }
 }
 
-#[pin_project(project = OwnedWriteHalfProj)]
-pub enum OwnedWriteHalf {
-    Tcp(#[pin] tcp::OwnedWriteHalf),
-    Unix(#[pin] unix::OwnedWriteHalf),
+pin_project! {
+    #[project = OwnedWriteHalfProj]
+    pub enum OwnedWriteHalf {
+        Tcp { #[pin] tcp: tcp::OwnedWriteHalf },
+        Unix { #[pin] unix: unix::OwnedWriteHalf },
+    }
 }
 
 impl AsyncWrite for OwnedWriteHalf {
@@ -56,8 +60,8 @@ impl AsyncWrite for OwnedWriteHalf {
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         match self.project() {
-            OwnedWriteHalfProj::Tcp(tcp) => tcp.poll_write(cx, buf),
-            OwnedWriteHalfProj::Unix(unix) => unix.poll_write(cx, buf),
+            OwnedWriteHalfProj::Tcp { tcp } => tcp.poll_write(cx, buf),
+            OwnedWriteHalfProj::Unix { unix } => unix.poll_write(cx, buf),
         }
     }
 
@@ -67,50 +71,62 @@ impl AsyncWrite for OwnedWriteHalf {
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
         match self.project() {
-            OwnedWriteHalfProj::Tcp(tcp) => tcp.poll_write_vectored(cx, bufs),
-            OwnedWriteHalfProj::Unix(unix) => unix.poll_write_vectored(cx, bufs),
+            OwnedWriteHalfProj::Tcp { tcp } => tcp.poll_write_vectored(cx, bufs),
+            OwnedWriteHalfProj::Unix { unix } => unix.poll_write_vectored(cx, bufs),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.project() {
-            OwnedWriteHalfProj::Tcp(tcp) => tcp.poll_flush(cx),
-            OwnedWriteHalfProj::Unix(unix) => unix.poll_flush(cx),
+            OwnedWriteHalfProj::Tcp { tcp } => tcp.poll_flush(cx),
+            OwnedWriteHalfProj::Unix { unix } => unix.poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.project() {
-            OwnedWriteHalfProj::Tcp(tcp) => tcp.poll_shutdown(cx),
-            OwnedWriteHalfProj::Unix(unix) => unix.poll_shutdown(cx),
+            OwnedWriteHalfProj::Tcp { tcp } => tcp.poll_shutdown(cx),
+            OwnedWriteHalfProj::Unix { unix } => unix.poll_shutdown(cx),
         }
     }
 }
 
-#[pin_project(project = StreamProj)]
-pub enum Stream {
-    Tcp(#[pin] TcpStream),
-    Unix(#[pin] UnixStream),
+pin_project! {
+    #[project = StreamProj]
+    pub enum Stream {
+        Tcp { #[pin] tcp: TcpStream },
+        Unix { #[pin] unix: UnixStream },
+    }
 }
 
 impl Stream {
     pub async fn connect_tcp<A: ToSocketAddrs>(addr: A) -> io::Result<Stream> {
-        Ok(Stream::Tcp(TcpStream::connect(addr).await?))
+        Ok(Stream::Tcp {
+            tcp: TcpStream::connect(addr).await?,
+        })
     }
 
     pub async fn connect_unix<P: AsRef<Path>>(addr: P) -> io::Result<Stream> {
-        Ok(Stream::Unix(UnixStream::connect(addr).await?))
+        Ok(Stream::Unix {
+            unix: UnixStream::connect(addr).await?,
+        })
     }
 
     pub fn into_split(self) -> (OwnedReadHalf, OwnedWriteHalf) {
         match self {
-            Stream::Tcp(tcp) => {
+            Stream::Tcp { tcp } => {
                 let (read, write) = tcp.into_split();
-                (OwnedReadHalf::Tcp(read), OwnedWriteHalf::Tcp(write))
+                (
+                    OwnedReadHalf::Tcp { tcp: read },
+                    OwnedWriteHalf::Tcp { tcp: write },
+                )
             }
-            Stream::Unix(unix) => {
+            Stream::Unix { unix } => {
                 let (read, write) = unix.into_split();
-                (OwnedReadHalf::Unix(read), OwnedWriteHalf::Unix(write))
+                (
+                    OwnedReadHalf::Unix { unix: read },
+                    OwnedWriteHalf::Unix { unix: write },
+                )
             }
         }
     }
@@ -123,8 +139,8 @@ impl AsyncRead for Stream {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match self.project() {
-            StreamProj::Tcp(tcp) => tcp.poll_read(cx, buf),
-            StreamProj::Unix(unix) => unix.poll_read(cx, buf),
+            StreamProj::Tcp { tcp } => tcp.poll_read(cx, buf),
+            StreamProj::Unix { unix } => unix.poll_read(cx, buf),
         }
     }
 }
@@ -136,8 +152,8 @@ impl AsyncWrite for Stream {
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         match self.project() {
-            StreamProj::Tcp(tcp) => tcp.poll_write(cx, buf),
-            StreamProj::Unix(unix) => unix.poll_write(cx, buf),
+            StreamProj::Tcp { tcp } => tcp.poll_write(cx, buf),
+            StreamProj::Unix { unix } => unix.poll_write(cx, buf),
         }
     }
 
@@ -147,22 +163,22 @@ impl AsyncWrite for Stream {
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
         match self.project() {
-            StreamProj::Tcp(tcp) => tcp.poll_write_vectored(cx, bufs),
-            StreamProj::Unix(unix) => unix.poll_write_vectored(cx, bufs),
+            StreamProj::Tcp { tcp } => tcp.poll_write_vectored(cx, bufs),
+            StreamProj::Unix { unix } => unix.poll_write_vectored(cx, bufs),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.project() {
-            StreamProj::Tcp(tcp) => tcp.poll_flush(cx),
-            StreamProj::Unix(unix) => unix.poll_flush(cx),
+            StreamProj::Tcp { tcp } => tcp.poll_flush(cx),
+            StreamProj::Unix { unix } => unix.poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.project() {
-            StreamProj::Tcp(tcp) => tcp.poll_shutdown(cx),
-            StreamProj::Unix(unix) => unix.poll_shutdown(cx),
+            StreamProj::Tcp { tcp } => tcp.poll_shutdown(cx),
+            StreamProj::Unix { unix } => unix.poll_shutdown(cx),
         }
     }
 }
@@ -190,11 +206,11 @@ impl Listener {
         match self {
             Listener::Tcp(tcp) => {
                 let (stream, addr) = tcp.accept().await?;
-                Ok((Stream::Tcp(stream), addr.into()))
+                Ok((Stream::Tcp { tcp: stream }, addr.into()))
             }
             Listener::Unix(unix) => {
                 let (stream, addr) = unix.accept().await?;
-                Ok((Stream::Unix(stream), addr.into()))
+                Ok((Stream::Unix { unix: stream }, addr.into()))
             }
         }
     }
